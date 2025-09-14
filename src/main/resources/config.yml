@@ -1,0 +1,15 @@
+---
+# License information (required)
+license: 'github.com/msncakma'
+
+# Discord webhook configuration
+discord:
+  webhook-url: 'YOUR_WEBHOOK_URL_HERE'
+  message-format:
+    title: 'Bug Report'
+    color: '#FF0000'
+    footer: 'Reported via MSNReports'
+
+# Security Settings
+# IMPORTANT: Change this key to a secure random string!
+encryption-key: 'change-this-to-a-secure-random-string-min-32-chars'

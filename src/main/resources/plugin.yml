@@ -1,0 +1,48 @@
+name: MSNReports
+version: '${project.version}'
+main: dev.msntech.msnreports.App
+api-version: '1.21'
+folia-supported: true
+description: A bug reporting plugin that sends reports to Discord
+commands:
+  reportbug:
+    description: Report a bug to the server staff
+    usage: /reportbug <description>
+    permission: msnreports.report
+  managereports:
+    description: Manage bug reports
+    usage: /managereports <list|view|status> [args...]
+    permission: msnreports.manage
+    aliases: [reports, mr]
+
+permissions:
+  msnreports.*:
+    description: Gives access to all MSNReports commands and features
+    children:
+      msnreports.report: true
+      msnreports.manage: true
+      msnreports.notify: true
+  
+  msnreports.report:
+    description: Allows players to report bugs
+    default: true
+  
+  msnreports.manage:
+    description: Allows staff to manage bug reports
+    default: op
+    children:
+      msnreports.manage.view: true
+      msnreports.manage.status: true
+      msnreports.notify: true
+  
+  msnreports.manage.view:
+    description: Allows viewing bug reports
+    default: op
+  
+  msnreports.manage.status:
+    description: Allows changing report status
+    default: op
+  
+  msnreports.notify:
+    description: Receive notifications about new reports and status changes
+    default: op
