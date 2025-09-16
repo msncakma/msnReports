@@ -34,6 +34,18 @@ public class ChatUtils {
                         .color(NamedTextColor.DARK_GRAY));
     }
 
+    public static Component createSuggestButton(String text, String command, NamedTextColor color) {
+        return Component.text("[ ")
+                .color(NamedTextColor.DARK_GRAY)
+                .append(Component.text(text)
+                        .color(color)
+                        .clickEvent(ClickEvent.suggestCommand(command))
+                        .hoverEvent(HoverEvent.showText(Component.text("Click to fill chat box with command")
+                                .color(NamedTextColor.GRAY))))
+                .append(Component.text(" ]")
+                        .color(NamedTextColor.DARK_GRAY));
+    }
+
     public static Component createHeader(String text) {
         return Component.text("════════ ")
                 .color(NamedTextColor.DARK_GRAY)

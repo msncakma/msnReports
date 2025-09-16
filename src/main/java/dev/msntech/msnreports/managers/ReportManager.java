@@ -1,6 +1,7 @@
 package dev.msntech.msnreports.managers;
 
 import dev.msntech.msnreports.App;
+import dev.msntech.msnreports.DiscordWebhookSender;
 import dev.msntech.msnreports.models.ReportStatus;
 import org.bukkit.entity.Player;
 import net.kyori.adventure.text.Component;
@@ -23,14 +24,34 @@ public class ReportManager {
     }
 
     public List<Map<String, String>> getReports(int page, int perPage) {
+        return getFilteredReports(page, perPage, null);
+    }
+    
+    public List<Map<String, String>> getFilteredReports(int page, int perPage, String statusFilter) {
         List<Map<String, String>> reports = new ArrayList<>();
-        String sql = "SELECT id, player_name, description, status, created_at FROM bug_reports ORDER BY created_at DESC LIMIT ? OFFSET ?";
+        StringBuilder sql = new StringBuilder("SELECT id, player_name, description, status, created_at FROM bug_reports");
+        
+        List<String> conditions = new ArrayList<>();
+        if (statusFilter != null && !statusFilter.isEmpty()) {
+            conditions.add("status = ?");
+        }
+        
+        if (!conditions.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", conditions));
+        }
+        
+        sql.append(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
         
         try (Connection conn = plugin.getDatabaseManager().getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+             PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
             
-            stmt.setInt(1, perPage);
-            stmt.setInt(2, (page - 1) * perPage);
+            int paramIndex = 1;
+            if (statusFilter != null && !statusFilter.isEmpty()) {
+                stmt.setString(paramIndex++, statusFilter);
+            }
+            
+            stmt.setInt(paramIndex++, perPage);
+            stmt.setInt(paramIndex, (page - 1) * perPage);
             
             ResultSet rs = stmt.executeQuery();
             while (rs.next()) {
@@ -43,24 +64,45 @@ public class ReportManager {
                 reports.add(report);
             }
         } catch (SQLException e) {
-            plugin.getLogger().severe("Failed to fetch reports: " + e.getMessage());
+            plugin.getLogger().severe("Failed to fetch filtered reports: " + e.getMessage());
         }
         
         return reports;
     }
 
     public boolean updateReportStatus(int reportId, ReportStatus newStatus, Player staff) {
-        String sql = "UPDATE bug_reports SET status = ? WHERE id = ?";
+        // First get the current status
+        String getCurrentStatusSql = "SELECT status FROM bug_reports WHERE id = ?";
+        ReportStatus oldStatus = null;
         
         try (Connection conn = plugin.getDatabaseManager().getConnection();
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
+             PreparedStatement getStmt = conn.prepareStatement(getCurrentStatusSql)) {
+            
+            getStmt.setInt(1, reportId);
+            ResultSet rs = getStmt.executeQuery();
+            if (rs.next()) {
+                oldStatus = ReportStatus.valueOf(rs.getString("status"));
+            } else {
+                return false; // Report not found
+            }
+        } catch (SQLException e) {
+            plugin.getLogger().severe("Failed to get current report status: " + e.getMessage());
+            return false;
+        }
+        
+        // Update the status
+        String updateSql = "UPDATE bug_reports SET status = ?, handler = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?";
+        
+        try (Connection conn = plugin.getDatabaseManager().getConnection();
+             PreparedStatement stmt = conn.prepareStatement(updateSql)) {
             
             stmt.setString(1, newStatus.name());
-            stmt.setInt(2, reportId);
+            stmt.setString(2, staff.getName());
+            stmt.setInt(3, reportId);
             
             int updated = stmt.executeUpdate();
             if (updated > 0) {
-                notifyStaffOfStatusChange(reportId, newStatus, staff);
+                notifyStaffOfStatusChange(reportId, oldStatus, newStatus, staff);
                 return true;
             }
         } catch (SQLException e) {
@@ -70,15 +112,27 @@ public class ReportManager {
         return false;
     }
 
-    private void notifyStaffOfStatusChange(int reportId, ReportStatus newStatus, Player updatedBy) {
-        String message = String.format("§6Report #%d status updated to %s by %s", 
-            reportId, newStatus.getDisplay(), updatedBy.getName());
+    private void notifyStaffOfStatusChange(int reportId, ReportStatus oldStatus, ReportStatus newStatus, Player updatedBy) {
+        String message = String.format("§6Report #%d status updated from %s to %s by %s", 
+            reportId, oldStatus.getDisplay(), newStatus.getDisplay(), updatedBy.getName());
         
+        // Notify online staff
         plugin.getServer().getOnlinePlayers().forEach(player -> {
             if (player.hasPermission("msnreports.manage")) {
                 player.sendMessage(Component.text(message));
             }
         });
+        
+        // Send Discord notification
+        try {
+            App app = (App) plugin;
+            DiscordWebhookSender webhookSender = app.getWebhookSender();
+            if (webhookSender != null) {
+                webhookSender.sendStatusUpdate(reportId, oldStatus, newStatus, updatedBy.getName());
+            }
+        } catch (Exception e) {
+            plugin.getLogger().warning("Failed to send Discord status update: " + e.getMessage());
+        }
     }
 
     public Map<String, String> getReportDetails(int reportId) {
@@ -109,5 +163,92 @@ public class ReportManager {
         }
         
         return null;
+    }
+
+    public boolean addReportComment(int reportId, String author, String comment) {
+        String sql = "SELECT comments FROM bug_reports WHERE id = ?";
+        String updateSql = "UPDATE bug_reports SET comments = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?";
+        
+        try (Connection conn = plugin.getDatabaseManager().getConnection()) {
+            // Get existing comments
+            String existingComments = "";
+            try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                stmt.setInt(1, reportId);
+                ResultSet rs = stmt.executeQuery();
+                if (rs.next()) {
+                    String encrypted = rs.getString("comments");
+                    if (encrypted != null && !encrypted.isEmpty()) {
+                        existingComments = plugin.getDatabaseManager().decrypt(encrypted);
+                    }
+                } else {
+                    return false; // Report not found
+                }
+            }
+            
+            // Create new comment entry
+            String timestamp = java.time.LocalDateTime.now().format(
+                java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            String newComment = String.format("[%s] 📝 %s: %s", timestamp, author, comment);
+            
+            // Append to existing comments
+            String updatedComments = existingComments.isEmpty() ? 
+                newComment : existingComments + "\n" + newComment;
+            
+            // Update the database
+            try (PreparedStatement updateStmt = conn.prepareStatement(updateSql)) {
+                updateStmt.setString(1, plugin.getDatabaseManager().encrypt(updatedComments));
+                updateStmt.setInt(2, reportId);
+                boolean success = updateStmt.executeUpdate() > 0;
+                
+                if (success) {
+                    // Send Discord notification for comment
+                    try {
+                        App app = (App) plugin;
+                        DiscordWebhookSender webhookSender = app.getWebhookSender();
+                        if (webhookSender != null) {
+                            webhookSender.sendCommentNotification(reportId, author, comment);
+                        }
+                    } catch (Exception e) {
+                        plugin.getLogger().warning("Failed to send Discord comment notification: " + e.getMessage());
+                    }
+                }
+                
+                return success;
+            }
+            
+        } catch (SQLException e) {
+            plugin.getLogger().severe("Failed to add comment: " + e.getMessage());
+        }
+        
+        return false;
+    }
+
+    public List<String> getReportComments(int reportId) {
+        List<String> comments = new ArrayList<>();
+        String sql = "SELECT comments FROM bug_reports WHERE id = ?";
+        
+        try (Connection conn = plugin.getDatabaseManager().getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, reportId);
+            ResultSet rs = stmt.executeQuery();
+            
+            if (rs.next()) {
+                String encrypted = rs.getString("comments");
+                if (encrypted != null && !encrypted.isEmpty()) {
+                    String decrypted = plugin.getDatabaseManager().decrypt(encrypted);
+                    String[] commentLines = decrypted.split("\n");
+                    for (String line : commentLines) {
+                        if (!line.trim().isEmpty()) {
+                            comments.add(line);
+                        }
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            plugin.getLogger().severe("Failed to fetch comments: " + e.getMessage());
+        }
+        
+        return comments;
     }
 }

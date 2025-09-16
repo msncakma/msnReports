@@ -6,8 +6,12 @@ folia-supported: true
 description: A bug reporting plugin that sends reports to Discord
 commands:
   reportbug:
-    description: Report a bug to the server staff
-    usage: /reportbug <description>
+    description: Report a bug to the server staff (Legacy command - use /report bug instead)
+    usage: /reportbug
+    permission: msnreports.report
+  report:
+    description: Main reporting command
+    usage: /report <bug|suggestion> [description]
     permission: msnreports.report
   managereports:
     description: Manage bug reports
@@ -33,6 +37,7 @@ permissions:
     children:
       msnreports.manage.view: true
       msnreports.manage.status: true
+      msnreports.manage.comment: true
       msnreports.notify: true
   
   msnreports.manage.view:
@@ -41,6 +46,10 @@ permissions:
   
   msnreports.manage.status:
     description: Allows changing report status
+    default: op
+  
+  msnreports.manage.comment:
+    description: Allows adding comments to reports
     default: op
   
   msnreports.notify:

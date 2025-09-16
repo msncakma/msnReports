@@ -6,6 +6,7 @@ import dev.msntech.msnreports.utils.RateLimiter;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -13,16 +14,18 @@ import io.papermc.paper.event.player.AsyncChatEvent;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-public class ReportBugCommand implements CommandExecutor, Listener {
+public class ReportCommand implements CommandExecutor, TabCompleter, Listener {
     private final App plugin;
     private final BugReportListener reportListener;
     private final Map<UUID, Boolean> awaitingReport;
 
-    public ReportBugCommand(App plugin) {
+    public ReportCommand(App plugin) {
         this.plugin = plugin;
         this.reportListener = new BugReportListener(plugin);
         this.awaitingReport = new HashMap<>();
@@ -38,13 +41,6 @@ public class ReportBugCommand implements CommandExecutor, Listener {
             return true;
         }
 
-        // Show deprecation notice
-        player.sendMessage(ChatUtils.getPrefix()
-                .append(Component.text("⚠️ This command is deprecated! ", NamedTextColor.YELLOW))
-                .append(Component.text("Please use ", NamedTextColor.GRAY))
-                .append(Component.text("/report bug", NamedTextColor.GREEN))
-                .append(Component.text(" instead.", NamedTextColor.GRAY)));
-
         if (!player.hasPermission("msnreports.report")) {
             player.sendMessage(ChatUtils.getPrefix()
                     .append(Component.text("You don't have permission to report bugs!")
@@ -52,16 +48,44 @@ public class ReportBugCommand implements CommandExecutor, Listener {
             return true;
         }
 
+        if (args.length == 0) {
+            player.sendMessage(ChatUtils.getPrefix()
+                    .append(Component.text("Usage: /report <bug|suggestion> [description]")
+                            .color(NamedTextColor.YELLOW)));
+            return true;
+        }
+
+        String subCommand = args[0].toLowerCase();
+        
+        switch (subCommand) {
+            case "bug":
+                handleBugReport(player, args);
+                break;
+            case "suggestion":
+                player.sendMessage(ChatUtils.getPrefix()
+                        .append(Component.text("Suggestion reporting is not yet implemented!")
+                                .color(NamedTextColor.YELLOW)));
+                break;
+            default:
+                player.sendMessage(ChatUtils.getPrefix()
+                        .append(Component.text("Unknown subcommand! Use: /report bug or /report suggestion")
+                                .color(NamedTextColor.RED)));
+        }
+
+        return true;
+    }
+
+    private void handleBugReport(Player player, String[] args) {
         // Check rate limiting
         if (!RateLimiter.canSubmitBugReport(player)) {
             long remainingSeconds = RateLimiter.getBugReportCooldownRemaining(player);
             player.sendMessage(ChatUtils.getPrefix()
                     .append(Component.text("Please wait " + remainingSeconds + " seconds before submitting another bug report.")
                             .color(NamedTextColor.RED)));
-            return true;
+            return;
         }
 
-        if (args.length == 0) {
+        if (args.length == 1) {
             // Start the report process
             awaitingReport.put(player.getUniqueId(), true);
             player.sendMessage(ChatUtils.getPrefix()
@@ -73,9 +97,33 @@ public class ReportBugCommand implements CommandExecutor, Listener {
                             .color(NamedTextColor.RED))
                     .append(Component.text(" to cancel.")
                             .color(NamedTextColor.GRAY)));
+        } else {
+            // Bug description provided directly in command
+            StringBuilder description = new StringBuilder();
+            for (int i = 1; i < args.length; i++) {
+                description.append(args[i]);
+                if (i < args.length - 1) description.append(" ");
+            }
+            
+            try {
+                String validatedDescription = ValidationUtil.validateDescription(description.toString());
+                ValidationUtil.validateLocation(player.getLocation());
+                
+                BugReport report = new BugReport(player, validatedDescription);
+                
+                // Show the GUI confirmation screen
+                reportListener.showConfirmationGUI(player, report);
+            } catch (IllegalArgumentException e) {
+                player.sendMessage(ChatUtils.getPrefix()
+                        .append(Component.text("Invalid bug report: " + e.getMessage())
+                                .color(NamedTextColor.RED)));
+            } catch (Exception e) {
+                player.sendMessage(ChatUtils.getPrefix()
+                        .append(Component.text("Failed to create bug report. Please try again.")
+                                .color(NamedTextColor.RED)));
+                plugin.getLogger().severe("Failed to create bug report: " + e.getMessage());
+            }
         }
-
-        return true;
     }
 
     @EventHandler
@@ -96,17 +144,13 @@ public class ReportBugCommand implements CommandExecutor, Listener {
             }
 
             try {
-                // Validate the bug report description
                 String validatedDescription = ValidationUtil.validateDescription(message);
-                
-                // Validate the player's location
                 ValidationUtil.validateLocation(player.getLocation());
                 
-                // Create the bug report and show GUI confirmation
                 BugReport report = new BugReport(player, validatedDescription);
                 awaitingReport.remove(playerId);
-                
-                // Show the GUI confirmation screen instead of text
+
+                // Show the GUI confirmation screen
                 reportListener.showConfirmationGUI(player, report);
                 
             } catch (IllegalArgumentException e) {
@@ -114,16 +158,22 @@ public class ReportBugCommand implements CommandExecutor, Listener {
                 player.sendMessage(ChatUtils.getPrefix()
                         .append(Component.text("Invalid bug report: " + e.getMessage())
                                 .color(NamedTextColor.RED)));
-                return;
             } catch (Exception e) {
                 awaitingReport.remove(playerId);
                 player.sendMessage(ChatUtils.getPrefix()
                         .append(Component.text("Failed to create bug report. Please try again.")
                                 .color(NamedTextColor.RED)));
                 plugin.getLogger().severe("Failed to create bug report: " + e.getMessage());
-                return;
             }
         }
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (args.length == 1) {
+            return Arrays.asList("bug", "suggestion");
+        }
+        return Arrays.asList();
     }
 
     public BugReportListener getReportListener() {

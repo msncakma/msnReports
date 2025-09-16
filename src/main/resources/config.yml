@@ -2,14 +2,61 @@
 # License information (required)
 license: 'github.com/msncakma'
 
+# Database configuration
+database:
+  type: 'sqlite' # 'sqlite' or 'mysql'
+  sqlite:
+    # SQLite database file (relative to plugin data folder)
+    filename: 'reports.db'
+  mysql:
+    host: 'localhost'
+    port: 3306
+    database: 'msnreports'
+    username: 'admin'
+    password: 'catsAreGreat'
+    # Connection pool settings
+    pool-size: 10
+    connection-timeout: 30000
+    idle-timeout: 600000
+    max-lifetime: 1800000
+
 # Discord webhook configuration
 discord:
-  webhook-url: 'YOUR_WEBHOOK_URL_HERE'
-  message-format:
-    title: 'Bug Report'
-    color: '#FF0000'
-    footer: 'Reported via MSNReports'
+  enabled: true
+  webhooks:
+    # Main webhook for bug reports
+    reports:
+      enabled: true
+      url: 'YOUR_REPORTS_WEBHOOK_URL_HERE'
+    # Webhook for admin status changes
+    admin-changes:
+      enabled: true
+      url: 'YOUR_ADMIN_CHANGES_WEBHOOK_URL_HERE'
+    # Webhook for comments/notes added by admins
+    admin-notes:
+      enabled: true
+      url: 'YOUR_ADMIN_NOTES_WEBHOOK_URL_HERE'
+    # Webhook for bug status changes
+    status-changes:
+      enabled: true
+      url: 'YOUR_STATUS_CHANGES_WEBHOOK_URL_HERE'
+
+# Update notification settings
+update-notifications:
+  enabled: true
+  check-on-startup: true
+  notify-admins: true
+  permission: 'msnreports.admin.notify'
+
+# Admin notification settings
+admin-notifications:
+  enabled: true
+  on-login: true
+  permission: 'msnreports.notify'
 
 # Security Settings
 # IMPORTANT: Change this key to a secure random string!
 encryption-key: 'change-this-to-a-secure-random-string-min-32-chars'
+
+# Plugin Version (DO NOT MODIFY - Updated automatically)
+version: '1.2-BETA'
