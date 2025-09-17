@@ -251,4 +251,78 @@ public class ReportManager {
         
         return comments;
     }
+    
+    public java.util.Optional<Map<String, Object>> getReport(int reportId) {
+        String sql = "SELECT * FROM bug_reports WHERE id = ?";
+        try (Connection conn = plugin.getDatabaseManager().getConnection();
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            
+            stmt.setInt(1, reportId);
+            ResultSet rs = stmt.executeQuery();
+            
+            if (rs.next()) {
+                Map<String, Object> report = new HashMap<>();
+                report.put("id", rs.getInt("id"));
+                report.put("playerName", rs.getString("player_name"));
+                report.put("playerUUID", rs.getString("player_uuid"));
+                report.put("description", rs.getString("description"));
+                
+                // Construct location from separate world, x, y, z columns
+                String location = "World: " + rs.getString("world") + 
+                                ", X: " + rs.getDouble("x") + 
+                                ", Y: " + rs.getDouble("y") + 
+                                ", Z: " + rs.getDouble("z");
+                report.put("location", location);
+                
+                report.put("gameMode", rs.getString("game_mode"));
+                report.put("health", rs.getDouble("health"));
+                report.put("level", rs.getInt("level"));
+                report.put("inventory", rs.getString("inventory"));
+                report.put("status", ReportStatus.valueOf(rs.getString("status")));
+                report.put("createdAt", rs.getTimestamp("created_at"));
+                
+                return java.util.Optional.of(report);
+            }
+        } catch (SQLException e) {
+            plugin.getLogger().severe("Failed to fetch report #" + reportId + ": " + e.getMessage());
+        }
+        return java.util.Optional.empty();
+    }
+    
+    public boolean deleteReport(int reportId) {
+        String deleteReportSql = "DELETE FROM bug_reports WHERE id = ?";
+        
+        try (Connection conn = plugin.getDatabaseManager().getConnection()) {
+            // Start transaction
+            conn.setAutoCommit(false);
+            
+            try {
+                // Delete the report (comments are stored in the same table, so they'll be deleted automatically)
+                try (PreparedStatement stmt = conn.prepareStatement(deleteReportSql)) {
+                    stmt.setInt(1, reportId);
+                    int rowsAffected = stmt.executeUpdate();
+                    
+                    if (rowsAffected > 0) {
+                        conn.commit();
+                        plugin.getLogger().info("Successfully deleted report #" + reportId + " and its comments");
+                        return true;
+                    } else {
+                        conn.rollback();
+                        plugin.getLogger().warning("No report found with ID #" + reportId);
+                        return false;
+                    }
+                }
+                
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(true);
+            }
+            
+        } catch (SQLException e) {
+            plugin.getLogger().severe("Failed to delete report #" + reportId + ": " + e.getMessage());
+            return false;
+        }
+    }
 }

@@ -18,12 +18,10 @@ import java.util.UUID;
 
 public class BugReportListener implements Listener {
     private final App plugin;
-    private final DiscordWebhookSender webhookSender;
     private final Map<UUID, BugReport> pendingReports;
 
     public BugReportListener(App plugin) {
         this.plugin = plugin;
-        this.webhookSender = new DiscordWebhookSender(plugin);
         this.pendingReports = new HashMap<>();
     }
 
@@ -31,9 +29,10 @@ public class BugReportListener implements Listener {
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         
-        // Check if this is our bug report GUI
-        String title = event.getView().title().toString();
-        if (!title.contains("Confirm Bug Report")) return;
+        // Check if this is our bug report GUI with more precise title checking
+        Component titleComponent = event.getView().title();
+        String title = titleComponent.toString();
+        if (!title.contains("Confirm Bug Report") && !title.contains("✓ Confirm Bug Report ✓")) return;
         
         // Always cancel the event to prevent item theft/movement
         event.setCancelled(true);
@@ -43,9 +42,8 @@ public class BugReportListener implements Listener {
         
         BugReport pendingReport = pendingReports.get(player.getUniqueId());
         if (pendingReport == null) {
+            // No error message needed - just close the inventory silently
             player.closeInventory();
-            player.sendMessage(Component.text("No pending bug report found. Please try again.")
-                    .color(NamedTextColor.RED));
             return;
         }
         
@@ -56,8 +54,9 @@ public class BugReportListener implements Listener {
                 player.closeInventory();
                 player.sendMessage(Component.text("✅ Submitting your bug report...")
                         .color(NamedTextColor.GREEN));
-                submitBugReport(pendingReport, player);
+                // Remove pending report immediately to prevent double-submission
                 pendingReports.remove(player.getUniqueId());
+                submitBugReport(pendingReport, player);
                 break;
                 
             case REDSTONE_BLOCK:
@@ -116,8 +115,8 @@ public class BugReportListener implements Listener {
             // Save to database first to get the report ID
             int reportId = plugin.getDatabaseManager().saveBugReport(report);
             if (reportId > 0) {
-                // Send enhanced Discord notification with report ID
-                webhookSender.sendBugReport(report, reportId, player);
+                // Send enhanced Discord notification with report ID using the App's webhook sender
+                plugin.getWebhookSender().sendBugReport(report, reportId, player);
                 player.sendMessage(Component.text("Your bug report #" + reportId + " has been submitted. Thank you!")
                         .color(NamedTextColor.GREEN));
             } else {

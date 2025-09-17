@@ -112,6 +112,45 @@ public class ManageReportsCommand implements CommandExecutor, TabCompleter {
                 updateReportStatus(player, Integer.parseInt(args[1]), args[2]);
                 break;
                 
+            case "delete":
+                if (!player.hasPermission("msnreports.admin.delete")) {
+                    player.sendMessage(ChatUtils.getPrefix()
+                            .append(Component.text("You don't have permission to delete reports!")
+                                    .color(NamedTextColor.RED)));
+                    return true;
+                }
+                
+                if (args.length < 2) {
+                    player.sendMessage(ChatUtils.getPrefix()
+                            .append(Component.text("Usage: /managereports delete <id> [confirm]")
+                                    .color(NamedTextColor.RED)));
+                    return true;
+                }
+                
+                try {
+                    int reportId = Integer.parseInt(args[1]);
+                    boolean forceConfirm = args.length > 2 && args[2].equalsIgnoreCase("confirm");
+                    
+                    if (forceConfirm) {
+                        // Bypass double confirmation
+                        var reportOpt = reportManager.getReport(reportId);
+                        if (reportOpt.isEmpty()) {
+                            player.sendMessage(ChatUtils.getPrefix()
+                                    .append(Component.text("Report #" + reportId + " not found!")
+                                            .color(NamedTextColor.RED)));
+                            return true;
+                        }
+                        deleteReport(player, reportId, reportOpt.get());
+                    } else {
+                        confirmDeleteReport(player, reportId);
+                    }
+                } catch (NumberFormatException e) {
+                    player.sendMessage(ChatUtils.getPrefix()
+                            .append(Component.text("Invalid report ID! Please provide a valid number.")
+                                    .color(NamedTextColor.RED)));
+                }
+                break;
+                
             case "reload":
                 if (!player.hasPermission("msnreports.admin.reload")) {
                     player.sendMessage(ChatUtils.getPrefix()
@@ -328,6 +367,10 @@ public class ManageReportsCommand implements CommandExecutor, TabCompleter {
                 .color(NamedTextColor.WHITE));
         player.sendMessage(Component.text("/managereports notifications - View notification settings")
                 .color(NamedTextColor.WHITE));
+        if (player.hasPermission("msnreports.admin.delete")) {
+            player.sendMessage(Component.text("/managereports delete <id> [confirm] - Delete a report (use 'confirm' to skip double confirmation)")
+                    .color(NamedTextColor.RED));
+        }
         if (player.hasPermission("msnreports.admin.reload")) {
             player.sendMessage(Component.text("/managereports reload - Reload plugin configuration")
                     .color(NamedTextColor.YELLOW));
@@ -379,6 +422,9 @@ public class ManageReportsCommand implements CommandExecutor, TabCompleter {
             if (sender.hasPermission("msnreports.admin.reload")) {
                 completions.add("reload");
             }
+            if (sender.hasPermission("msnreports.admin.delete")) {
+                completions.add("delete");
+            }
         } else if (args.length == 2) {
             if (args[0].equalsIgnoreCase("filter")) {
                 completions.addAll(Arrays.asList("status"));
@@ -402,12 +448,39 @@ public class ManageReportsCommand implements CommandExecutor, TabCompleter {
     
     private void reloadConfig(Player player) {
         try {
+            // Get webhook status before reload
+            boolean oldReportsEnabled = plugin.isReportsWebhookEnabled();
+            boolean oldAdminChangesEnabled = plugin.isAdminChangesWebhookEnabled(); 
+            boolean oldAdminNotesEnabled = plugin.isAdminNotesWebhookEnabled();
+            boolean oldStatusChangesEnabled = plugin.isStatusChangesWebhookEnabled();
+            
             // Reload the plugin configuration
             plugin.reloadConfig();
+            
+            // Get webhook status after reload
+            boolean newReportsEnabled = plugin.isReportsWebhookEnabled();
+            boolean newAdminChangesEnabled = plugin.isAdminChangesWebhookEnabled();
+            boolean newAdminNotesEnabled = plugin.isAdminNotesWebhookEnabled();
+            boolean newStatusChangesEnabled = plugin.isStatusChangesWebhookEnabled();
             
             player.sendMessage(ChatUtils.getPrefix()
                     .append(Component.text("Configuration reloaded successfully!")
                             .color(NamedTextColor.GREEN)));
+            
+            // Show webhook status changes
+            player.sendMessage(Component.text("Webhook Status:", NamedTextColor.YELLOW));
+            player.sendMessage(Component.text("  Reports: " + (newReportsEnabled ? "✓ Enabled" : "✗ Disabled") + 
+                               (oldReportsEnabled != newReportsEnabled ? " (CHANGED)" : ""), 
+                               newReportsEnabled ? NamedTextColor.GREEN : NamedTextColor.GRAY));
+            player.sendMessage(Component.text("  Admin Changes: " + (newAdminChangesEnabled ? "✓ Enabled" : "✗ Disabled") + 
+                               (oldAdminChangesEnabled != newAdminChangesEnabled ? " (CHANGED)" : ""), 
+                               newAdminChangesEnabled ? NamedTextColor.GREEN : NamedTextColor.GRAY));
+            player.sendMessage(Component.text("  Admin Notes: " + (newAdminNotesEnabled ? "✓ Enabled" : "✗ Disabled") + 
+                               (oldAdminNotesEnabled != newAdminNotesEnabled ? " (CHANGED)" : ""), 
+                               newAdminNotesEnabled ? NamedTextColor.GREEN : NamedTextColor.GRAY));
+            player.sendMessage(Component.text("  Status Changes: " + (newStatusChangesEnabled ? "✓ Enabled" : "✗ Disabled") + 
+                               (oldStatusChangesEnabled != newStatusChangesEnabled ? " (CHANGED)" : ""), 
+                               newStatusChangesEnabled ? NamedTextColor.GREEN : NamedTextColor.GRAY));
             
             plugin.getLogger().info("Configuration reloaded by " + player.getName());
             
@@ -454,5 +527,117 @@ public class ManageReportsCommand implements CommandExecutor, TabCompleter {
         player.sendMessage(Component.text("💡 To change these settings, edit the config.yml file", NamedTextColor.GRAY));
         player.sendMessage(Component.text("   and use /managereports reload to apply changes", NamedTextColor.GRAY));
         player.sendMessage(Component.text("=".repeat(50)).color(NamedTextColor.GOLD));
+    }
+    
+    // Store pending deletions to prevent accidental deletions
+    private static final Map<String, Integer> pendingDeletions = new java.util.concurrent.ConcurrentHashMap<>();
+    
+    private void confirmDeleteReport(Player player, int reportId) {
+        plugin.getLogger().info("Confirming delete for report #" + reportId + " by " + player.getName());
+        
+        // Check if report exists first
+        var reportOpt = reportManager.getReport(reportId);
+        if (reportOpt.isEmpty()) {
+            plugin.getLogger().warning("Report #" + reportId + " not found in database");
+            player.sendMessage(ChatUtils.getPrefix()
+                    .append(Component.text("Report #" + reportId + " not found!")
+                            .color(NamedTextColor.RED)));
+            return;
+        }
+        
+        var report = reportOpt.get();
+        String playerId = player.getUniqueId().toString();
+        
+        plugin.getLogger().info("Report #" + reportId + " found. Checking pending deletions for player " + player.getName());
+        
+        // Check if there's already a pending deletion for this player
+        if (pendingDeletions.containsKey(playerId)) {
+            int pendingId = pendingDeletions.get(playerId);
+            plugin.getLogger().info("Found pending deletion for player " + player.getName() + 
+                    ": pending=" + pendingId + ", requested=" + reportId);
+            
+            if (pendingId == reportId) {
+                // Same report, proceed with deletion
+                plugin.getLogger().info("Proceeding with deletion of report #" + reportId);
+                deleteReport(player, reportId, report);
+                pendingDeletions.remove(playerId);
+                return;
+            } else {
+                // Different report, update pending
+                pendingDeletions.put(playerId, reportId);
+                plugin.getLogger().info("Updated pending deletion to report #" + reportId);
+            }
+        } else {
+            // No pending deletion, add one
+            pendingDeletions.put(playerId, reportId);
+            plugin.getLogger().info("Added new pending deletion for report #" + reportId);
+        }
+        
+        // Send confirmation message
+        player.sendMessage(ChatUtils.getPrefix()
+                .append(Component.text("⚠️ Are you sure you want to delete report #" + reportId + "?")
+                        .color(NamedTextColor.YELLOW)));
+        
+        player.sendMessage(Component.text("📋 Report Details:")
+                .color(NamedTextColor.GRAY));
+        player.sendMessage(Component.text("   Player: " + report.get("playerName"))
+                .color(NamedTextColor.WHITE));
+        player.sendMessage(Component.text("   Description: " + 
+                (report.get("description").toString().length() > 50 ? 
+                report.get("description").toString().substring(0, 50) + "..." : 
+                report.get("description").toString()))
+                .color(NamedTextColor.WHITE));
+        player.sendMessage(Component.text("   Status: " + report.get("status"))
+                .color(NamedTextColor.WHITE));
+        
+        player.sendMessage(Component.text(""));
+        player.sendMessage(Component.text("🚨 This action cannot be undone!")
+                .color(NamedTextColor.RED));
+        player.sendMessage(Component.text("Type the same command again within 30 seconds to confirm deletion.")
+                .color(NamedTextColor.YELLOW));
+        
+        // Schedule removal of pending deletion after 30 seconds using Folia-compatible scheduling
+        plugin.getServer().getGlobalRegionScheduler().runDelayed(plugin, (task) -> {
+            if (pendingDeletions.get(playerId) != null && pendingDeletions.get(playerId) == reportId) {
+                pendingDeletions.remove(playerId);
+                player.sendMessage(ChatUtils.getPrefix()
+                        .append(Component.text("Delete confirmation expired for report #" + reportId)
+                                .color(NamedTextColor.GRAY)));
+            }
+        }, 20L * 30); // 30 seconds
+    }
+    
+    private void deleteReport(Player player, int reportId, Map<String, Object> report) {
+        try {
+            // Delete from database
+            boolean success = reportManager.deleteReport(reportId);
+            
+            if (success) {
+                player.sendMessage(ChatUtils.getPrefix()
+                        .append(Component.text("✅ Report #" + reportId + " has been deleted successfully!")
+                                .color(NamedTextColor.GREEN)));
+                
+                // Log the deletion
+                plugin.getLogger().info("Report #" + reportId + " deleted by " + player.getName() + 
+                        " (Player: " + report.get("playerName") + ")");
+                
+                // Send Discord notification if enabled
+                if (plugin.getWebhookSender() != null) {
+                    plugin.getWebhookSender().sendReportDeletion(reportId, report, player);
+                }
+                
+            } else {
+                player.sendMessage(ChatUtils.getPrefix()
+                        .append(Component.text("❌ Failed to delete report #" + reportId + "!")
+                                .color(NamedTextColor.RED)));
+            }
+            
+        } catch (Exception e) {
+            player.sendMessage(ChatUtils.getPrefix()
+                    .append(Component.text("❌ Error occurred while deleting report: " + e.getMessage())
+                            .color(NamedTextColor.RED)));
+            plugin.getLogger().severe("Failed to delete report #" + reportId + ": " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }

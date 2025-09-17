@@ -9,6 +9,7 @@ import dev.msntech.msnreports.utils.UpdateChecker;
 import dev.msntech.msnreports.database.DatabaseManager;
 import dev.msntech.msnreports.managers.ReportManager;
 import net.kyori.adventure.text.Component;
+import java.util.Objects;
 
 public class App extends JavaPlugin {
     private FileConfiguration config;
@@ -167,28 +168,77 @@ public class App extends JavaPlugin {
                 return;
             }
             
+            // Store old webhook URLs for comparison (only if they exist)
+            String oldReportsUrl = this.reportsWebhookUrl;
+            String oldAdminChangesUrl = this.adminChangesWebhookUrl;
+            String oldAdminNotesUrl = this.adminNotesWebhookUrl;
+            String oldStatusChangesUrl = this.statusChangesWebhookUrl;
+            
             // Reload webhook URLs with new structure
             reportsWebhookUrl = config.getString("discord.webhooks.reports.url", "");
             adminChangesWebhookUrl = config.getString("discord.webhooks.admin-changes.url", "");
             adminNotesWebhookUrl = config.getString("discord.webhooks.admin-notes.url", "");
             statusChangesWebhookUrl = config.getString("discord.webhooks.status-changes.url", "");
             
-            // Close and reinitialize webhook sender
-            if (webhookSender != null) {
-                webhookSender.close();
+            // Log webhook URL changes (only if this is not the first initialization)
+            if (oldReportsUrl != null) {
+                getLogger().info("Reloading webhook configurations...");
+                getLogger().info("Webhook enabled states: reports=" + isReportsWebhookEnabled() + 
+                               ", admin-changes=" + isAdminChangesWebhookEnabled() + 
+                               ", admin-notes=" + isAdminNotesWebhookEnabled() + 
+                               ", status-changes=" + isStatusChangesWebhookEnabled());
+                
+                // Log URL changes with better comparison
+                boolean urlsChanged = false;
+                if (!Objects.equals(oldReportsUrl, reportsWebhookUrl)) {
+                    getLogger().info("Reports webhook URL changed from '" + (oldReportsUrl == null ? "null" : oldReportsUrl) + 
+                                   "' to '" + reportsWebhookUrl + "'");
+                    urlsChanged = true;
+                }
+                if (!Objects.equals(oldAdminChangesUrl, adminChangesWebhookUrl)) {
+                    getLogger().info("Admin changes webhook URL changed from '" + (oldAdminChangesUrl == null ? "null" : oldAdminChangesUrl) + 
+                                   "' to '" + adminChangesWebhookUrl + "'");
+                    urlsChanged = true;
+                }
+                if (!Objects.equals(oldAdminNotesUrl, adminNotesWebhookUrl)) {
+                    getLogger().info("Admin notes webhook URL changed from '" + (oldAdminNotesUrl == null ? "null" : oldAdminNotesUrl) + 
+                                   "' to '" + adminNotesWebhookUrl + "'");
+                    urlsChanged = true;
+                }
+                if (!Objects.equals(oldStatusChangesUrl, statusChangesWebhookUrl)) {
+                    getLogger().info("Status changes webhook URL changed from '" + (oldStatusChangesUrl == null ? "null" : oldStatusChangesUrl) + 
+                                   "' to '" + statusChangesWebhookUrl + "'");
+                    urlsChanged = true;
+                }
+                
+                if (urlsChanged) {
+                    getLogger().info("Webhook URLs changed, reinitializing webhook clients...");
+                } else {
+                    getLogger().info("No webhook URL changes detected, but reinitializing anyway for configuration reload...");
+                }
+                
+                // Always close and reinitialize webhook sender on reload
+                if (webhookSender != null) {
+                    webhookSender.close();
+                    getLogger().info("Closed old webhook clients");
+                }
+                webhookSender = new DiscordWebhookSender(this);
+                getLogger().info("Initialized new webhook clients");
+                
+                // Close and reinitialize database manager 
+                if (databaseManager != null) {
+                    databaseManager.close();
+                }
+                databaseManager = new DatabaseManager(this);
+                
+                // Reinitialize report manager
+                reportManager = new ReportManager(this);
+                
+                getLogger().info("Configuration reloaded successfully! All components reinitialized.");
+            } else {
+                // First-time initialization, just log that config was loaded
+                getLogger().info("Configuration loaded successfully.");
             }
-            webhookSender = new DiscordWebhookSender(this);
-            
-            // Close and reinitialize database manager if database type changed
-            if (databaseManager != null) {
-                databaseManager.close();
-            }
-            databaseManager = new DatabaseManager(this);
-            
-            // Reinitialize report manager
-            reportManager = new ReportManager(this);
-            
-            getLogger().info("Configuration reloaded successfully! All components reinitialized.");
             
         } catch (Exception e) {
             getLogger().severe("Failed to reload configuration: " + e.getMessage());

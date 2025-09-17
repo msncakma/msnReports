@@ -55,3 +55,15 @@ permissions:
   msnreports.notify:
     description: Receive notifications about new reports and status changes
     default: op
+  
+  msnreports.admin.reload:
+    description: Allows reloading plugin configuration
+    default: op
+  
+  msnreports.admin.delete:
+    description: Allows deleting bug reports (dangerous permission)
+    default: op
+  
+  msnreports.admin.notify:
+    description: Receive update notifications for new plugin versions
+    default: op

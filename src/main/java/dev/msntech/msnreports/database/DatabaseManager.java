@@ -207,7 +207,7 @@ public class DatabaseManager {
             try (java.sql.ResultSet rs = stmt.getGeneratedKeys()) {
                 if (rs.next()) {
                     int reportId = rs.getInt(1);
-                    plugin.getLogger().info("Encrypted bug report #" + reportId + " saved to database successfully!");
+                    // Bug report saved successfully - reduced logging for cleaner console
                     return reportId;
                 }
             }

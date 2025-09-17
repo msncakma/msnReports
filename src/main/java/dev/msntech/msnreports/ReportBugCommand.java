@@ -38,13 +38,6 @@ public class ReportBugCommand implements CommandExecutor, Listener {
             return true;
         }
 
-        // Show deprecation notice
-        player.sendMessage(ChatUtils.getPrefix()
-                .append(Component.text("⚠️ This command is deprecated! ", NamedTextColor.YELLOW))
-                .append(Component.text("Please use ", NamedTextColor.GRAY))
-                .append(Component.text("/report bug", NamedTextColor.GREEN))
-                .append(Component.text(" instead.", NamedTextColor.GRAY)));
-
         if (!player.hasPermission("msnreports.report")) {
             player.sendMessage(ChatUtils.getPrefix()
                     .append(Component.text("You don't have permission to report bugs!")

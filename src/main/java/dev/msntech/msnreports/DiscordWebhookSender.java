@@ -16,6 +16,7 @@ import java.awt.Color;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Map;
 
 public class DiscordWebhookSender {
     private final WebhookClient reportsClient;
@@ -28,17 +29,41 @@ public class DiscordWebhookSender {
         this.plugin = plugin;
         
         // Initialize webhook clients based on configuration
-        this.reportsClient = initializeClient(plugin.getReportsWebhookUrl());
-        this.adminChangesClient = initializeClient(plugin.getAdminChangesWebhookUrl());
-        this.adminNotesClient = initializeClient(plugin.getAdminNotesWebhookUrl());
-        this.statusChangesClient = initializeClient(plugin.getStatusChangesWebhookUrl());
+        String reportsUrl = plugin.getReportsWebhookUrl();
+        String adminChangesUrl = plugin.getAdminChangesWebhookUrl();
+        String adminNotesUrl = plugin.getAdminNotesWebhookUrl();
+        String statusChangesUrl = plugin.getStatusChangesWebhookUrl();
+        
+        this.reportsClient = initializeClient(reportsUrl, "Reports");
+        this.adminChangesClient = initializeClient(adminChangesUrl, "Admin Changes");
+        this.adminNotesClient = initializeClient(adminNotesUrl, "Admin Notes");
+        this.statusChangesClient = initializeClient(statusChangesUrl, "Status Changes");
     }
 
-    private WebhookClient initializeClient(String webhookUrl) {
-        if (webhookUrl != null && !webhookUrl.isEmpty() && !webhookUrl.startsWith("YOUR_")) {
-            return new WebhookClientBuilder(webhookUrl).build();
+    private WebhookClient initializeClient(String webhookUrl, String clientName) {
+        // Validate webhook URL with less verbose logging
+        if (webhookUrl == null || webhookUrl.isEmpty() || webhookUrl.isBlank()) {
+            return null;
         }
-        return null;
+        
+        if (webhookUrl.startsWith("YOUR_")) {
+            plugin.getLogger().warning(clientName + " webhook URL is placeholder - please update in config.yml");
+            return null;
+        }
+        
+        if (!webhookUrl.startsWith("https://discord.com/api/webhooks/")) {
+            plugin.getLogger().warning(clientName + " webhook URL is invalid - must be a Discord webhook URL");
+            return null;
+        }
+        
+        // Create the client
+        try {
+            WebhookClient client = new WebhookClientBuilder(webhookUrl).build();
+            return client;
+        } catch (Exception e) {
+            plugin.getLogger().severe("Failed to initialize " + clientName + " webhook client: " + e.getMessage());
+            return null;
+        }
     }
     
     private String stripMinecraftColors(String text) {
@@ -51,17 +76,38 @@ public class DiscordWebhookSender {
     }
 
     public void sendBugReport(BugReport report, int reportId, Player player) {
-        if (!plugin.isDiscordEnabled() || !plugin.isReportsWebhookEnabled() || reportsClient == null) {
+        if (!plugin.isDiscordEnabled()) {
+            plugin.getLogger().info("Discord is disabled in config.yml");
             // Still notify the player that the report was saved
             player.sendMessage(ChatUtils.getPrefix()
                     .append(Component.text("Your bug report has been saved! ")
                             .color(NamedTextColor.GREEN))
                     .append(Component.text("Report ID: #" + reportId)
                             .color(NamedTextColor.AQUA)));
-            
-            if (!plugin.isReportsWebhookEnabled()) {
-                plugin.getLogger().info("Reports webhook is disabled in config.yml");
-            }
+            return;
+        }
+        
+        if (!plugin.isReportsWebhookEnabled()) {
+            plugin.getLogger().info("Reports webhook is disabled in config.yml");
+            // Still notify the player that the report was saved
+            player.sendMessage(ChatUtils.getPrefix()
+                    .append(Component.text("Your bug report has been saved! ")
+                            .color(NamedTextColor.GREEN))
+                    .append(Component.text("Report ID: #" + reportId)
+                            .color(NamedTextColor.AQUA)));
+            return;
+        }
+        
+        if (reportsClient == null) {
+            plugin.getLogger().warning("Reports webhook client is null! URL: '" + plugin.getReportsWebhookUrl() + 
+                                      "', Enabled: " + plugin.isReportsWebhookEnabled());
+            plugin.getLogger().warning("Please set a valid Discord webhook URL in config.yml");
+            // Still notify the player that the report was saved
+            player.sendMessage(ChatUtils.getPrefix()
+                    .append(Component.text("Your bug report has been saved! ")
+                            .color(NamedTextColor.GREEN))
+                    .append(Component.text("Report ID: #" + reportId + " (Discord notification failed)")
+                            .color(NamedTextColor.YELLOW)));
             return;
         }
         
@@ -80,53 +126,40 @@ public class DiscordWebhookSender {
         // Record the webhook send
         RateLimiter.recordDiscordWebhook();
         
-        Color embedColor = new Color(255, 102, 102); // Red color for bug reports
-        String categoryEmoji = "🐛"; // Bug emoji
+        Color embedColor = new Color(220, 20, 60); // Crimson red for bug reports
         
         // Strip color codes from text fields
         String cleanDescription = stripMinecraftColors(report.getDescription());
         String cleanPlayerName = stripMinecraftColors(report.getPlayerName());
-        String cleanGameMode = stripMinecraftColors(report.getGameMode());
         String cleanLocation = stripMinecraftColors(formatLocation(report.getLocation()));
-        String cleanInventory = stripMinecraftColors(truncateInventory(report.getInventory()));
+        String cleanGameMode = stripMinecraftColors(report.getGameMode());
         
         WebhookEmbed embed = new WebhookEmbedBuilder()
                 .setTitle(new WebhookEmbed.EmbedTitle(
                     "🐛 Bug Report #" + reportId, 
                     null))
-                .setDescription("```\n" + cleanDescription + "\n```")
-                .addField(new WebhookEmbed.EmbedField(true, "📊 Status", 
-                    "🆕 **OPEN**"))
-                .addField(new WebhookEmbed.EmbedField(true, "⏰ Priority", 
-                    "🔔 **Normal**"))
-                .addField(new WebhookEmbed.EmbedField(true, "👤 Reporter Information", 
-                    "**Player:** " + cleanPlayerName + "\n" +
-                    "**UUID:** `" + report.getPlayerUUID() + "`\n" +
-                    "**GameMode:** " + cleanGameMode))
-                .addField(new WebhookEmbed.EmbedField(true, "❤️ Player Status", 
-                    "**Health:** " + String.format("%.1f", report.getHealth()) + " ❤️\n" +
-                    "**Level:** " + report.getLevel() + " ⭐\n" +
-                    "**Experience:** " + getExperienceDescription(report.getLevel())))
-                .addField(new WebhookEmbed.EmbedField(true, "🗺️ Location Details", 
-                    cleanLocation))
-                .addField(new WebhookEmbed.EmbedField(false, "🎒 Player Inventory", 
-                    "```\n" + cleanInventory + "\n```"))
+                .setDescription("**📝 Description:**\n" + cleanDescription)
+                .addField(new WebhookEmbed.EmbedField(true, "👤 Reporter", cleanPlayerName))
+                .addField(new WebhookEmbed.EmbedField(true, "📊 Status", "Open"))
+                .addField(new WebhookEmbed.EmbedField(true, "⚡ Priority", "Normal"))
+                .addField(new WebhookEmbed.EmbedField(true, "❓ Game Mode", cleanGameMode))
+                .addField(new WebhookEmbed.EmbedField(true, "❤ Health", String.format("%.1f/20", report.getHealth())))
+                .addField(new WebhookEmbed.EmbedField(true, "⭐ Level", String.valueOf(report.getLevel())))
+                .addField(new WebhookEmbed.EmbedField(false, "📍 Location", cleanLocation))
+                .addField(new WebhookEmbed.EmbedField(false, "⏰ Reported", report.getTimestamp()))
                 .setColor(embedColor.getRGB())
                 .setTimestamp(OffsetDateTime.now())
                 .setFooter(new WebhookEmbed.EmbedFooter(
-                    "Report ID: " + reportId + " • msnReports-v" + plugin.getDescription().getVersion(), 
+                    "msnReports-v" + plugin.getDescription().getVersion() + " • ID: " + reportId, 
                     null))
                 .build();
 
         WebhookMessage message = new WebhookMessageBuilder()
-                .setUsername("🔧 MSN Reports")
-                .setAvatarUrl("https://i.imgur.com/QfTn5hP.png") // Bug icon
+                .setUsername("MSN Reports")
                 .addEmbeds(embed)
-                .setContent("## 🚨 New Bug Report Alert!\n*A player has submitted a new bug report that needs attention.*")
                 .build();
 
         reportsClient.send(message).thenAccept(sentMessage -> {
-            plugin.getLogger().info("Bug report #" + reportId + " sent to Discord successfully!");
             player.sendMessage(ChatUtils.getPrefix()
                     .append(Component.text("Your bug report has been sent to Discord successfully! ")
                             .color(NamedTextColor.GREEN))
@@ -151,67 +184,53 @@ public class DiscordWebhookSender {
         
         Color embedColor = getStatusColor(newStatus);
         String statusEmoji = getStatusEmoji(newStatus);
-        String oldStatusEmoji = getStatusEmoji(oldStatus);
         String cleanHandlerName = stripMinecraftColors(handlerName);
         
         WebhookEmbed embed = new WebhookEmbedBuilder()
                 .setTitle(new WebhookEmbed.EmbedTitle(
-                    "📋 Bug Report #" + reportId + " Status Update", 
+                    statusEmoji + " Report #" + reportId + " Status Updated", 
                     null))
-                .setDescription("The status of this bug report has been updated by a staff member.")
-                .addField(new WebhookEmbed.EmbedField(true, "� Status Change", 
-                    oldStatusEmoji + " **" + oldStatus.getDisplay() + "**\n" +
-                    "⬇️\n" +
-                    statusEmoji + " **" + newStatus.getDisplay() + "**"))
-                .addField(new WebhookEmbed.EmbedField(true, "👨‍💼 Handler", 
-                    "🛡️ **" + cleanHandlerName + "**\n" +
-                    "*Staff Member*"))
-                .addField(new WebhookEmbed.EmbedField(true, "⏰ Updated At", 
-                    "🕐 " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm"))))
+                .setDescription("Status changed from **" + oldStatus.getDisplay() + "** to **" + newStatus.getDisplay() + "**")
+                .addField(new WebhookEmbed.EmbedField(true, "Handler", cleanHandlerName))
+                .addField(new WebhookEmbed.EmbedField(true, "New Status", newStatus.getDisplay()))
                 .setColor(embedColor.getRGB())
                 .setTimestamp(OffsetDateTime.now())
                 .setFooter(new WebhookEmbed.EmbedFooter(
-                    "Report ID: " + reportId + " • Updated by " + cleanHandlerName + " • msnReports-v" + plugin.getDescription().getVersion(), 
+                    "msnReports-v" + plugin.getDescription().getVersion() + " • ID: " + reportId, 
                     null))
                 .build();
 
         WebhookMessage message = new WebhookMessageBuilder()
-                .setUsername("🔧 MSN Reports")
+                .setUsername("MSN Reports")
                 .addEmbeds(embed)
-                .setContent("## " + statusEmoji + " Report Status Updated!\n*Bug report #" + reportId + " has been updated to **" + newStatus.getDisplay() + "***")
                 .build();
 
-        statusChangesClient.send(message).thenAccept(sentMessage -> 
-            plugin.getLogger().info("Status update for report #" + reportId + " sent to Discord!")
-        ).exceptionally(error -> {
+        statusChangesClient.send(message).thenAccept(sentMessage -> {
+            // Success - reduced logging for cleaner console
+        }).exceptionally(error -> {
             plugin.getLogger().severe("Failed to send status update to Discord: " + error.getMessage());
             return null;
         });
     }
 
     public void sendCommentNotification(int reportId, String commenterName, String comment) {
+        String cleanComment = stripMinecraftColors(comment);
+        
         WebhookEmbed embed = new WebhookEmbedBuilder()
                 .setTitle(new WebhookEmbed.EmbedTitle(
-                    "💬 New Comment on Bug Report #" + reportId, 
+                    "💬 Comment on Report #" + reportId, 
                     null))
-                .setDescription("A new comment has been added to this bug report.")
-                .addField(new WebhookEmbed.EmbedField(true, "👤 Commenter", 
-                    "🛡️ **" + commenterName + "**\n*Staff Member*"))
-                .addField(new WebhookEmbed.EmbedField(true, "⏰ Posted At", 
-                    "🕐 " + LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMM dd, yyyy HH:mm"))))
-                .addField(new WebhookEmbed.EmbedField(false, "📝 Comment Content", 
-                    "```\n" + truncateText(comment, 500) + "\n```"))
+                .setDescription("**" + commenterName + "** added a comment:\n\n" + truncateText(cleanComment, 300))
                 .setColor(new Color(52, 152, 219).getRGB()) // Blue color
                 .setTimestamp(OffsetDateTime.now())
                 .setFooter(new WebhookEmbed.EmbedFooter(
-                    "Report ID: " + reportId + " • Comment by " + commenterName + " • msnReports-v" + plugin.getDescription().getVersion(), 
+                    "msnReports-v" + plugin.getDescription().getVersion() + " • ID: " + reportId, 
                     null))
                 .build();
 
         WebhookMessage message = new WebhookMessageBuilder()
-                .setUsername("🔧 MSN Reports")
+                .setUsername("MSN Reports")
                 .addEmbeds(embed)
-                .setContent("## 💬 New Comment Added!\n*" + commenterName + " has commented on bug report #" + reportId + "*")
                 .build();
 
         adminNotesClient.send(message).thenAccept(sentMessage -> 
@@ -267,6 +286,54 @@ public class DiscordWebhookSender {
         if (level < 50) return "Advanced";
         if (level < 100) return "Expert";
         return "Master";
+    }
+    
+    public void sendReportDeletion(int reportId, Map<String, Object> report, org.bukkit.entity.Player deletedBy) {
+        if (!plugin.isDiscordEnabled() || !plugin.isAdminChangesWebhookEnabled() || adminChangesClient == null) {
+            return;
+        }
+        
+        Color embedColor = new Color(220, 53, 69); // Bootstrap danger red
+        
+        // Strip color codes from text fields
+        String cleanDescription = stripMinecraftColors(report.get("description").toString());
+        String cleanPlayerName = stripMinecraftColors(report.get("playerName").toString());
+        String cleanDeletedBy = stripMinecraftColors(deletedBy.getName());
+        
+        WebhookEmbed embed = new WebhookEmbedBuilder()
+                .setTitle(new WebhookEmbed.EmbedTitle(
+                    "🗑️ Report #" + reportId + " Deleted", 
+                    null))
+                .setDescription("Report permanently deleted by **" + cleanDeletedBy + "**")
+                .addField(new WebhookEmbed.EmbedField(true, "�‍💼 **Action Performed By**", 
+                    "**Admin:** `" + cleanDeletedBy + "`\n" +
+                    "**UUID:** `" + deletedBy.getUniqueId().toString().substring(0, 8) + "...`\n" +
+                    "**Timestamp:** <t:" + (System.currentTimeMillis() / 1000) + ":F>"))
+                .addField(new WebhookEmbed.EmbedField(true, "Original Reporter", cleanPlayerName))
+                .addField(new WebhookEmbed.EmbedField(false, "Original Description", 
+                    truncateText(cleanDescription, 200)))
+
+                .setColor(embedColor.getRGB())
+                .setTimestamp(OffsetDateTime.now())
+                .setFooter(new WebhookEmbed.EmbedFooter(
+                    "msnReports-v" + plugin.getDescription().getVersion() + " • ID: " + reportId, 
+                    null))
+                .build();
+
+        WebhookMessage message = new WebhookMessageBuilder()
+                .setUsername("MSN Reports")
+                .addEmbeds(embed)
+                .build();
+
+        try {
+            adminChangesClient.send(message).whenComplete((result, throwable) -> {
+                if (throwable != null) {
+                    plugin.getLogger().warning("Failed to send report deletion notification to Discord: " + throwable.getMessage());
+                }
+            });
+        } catch (Exception e) {
+            plugin.getLogger().warning("Error sending report deletion notification: " + e.getMessage());
+        }
     }
 
     public void close() {

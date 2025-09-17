@@ -20,28 +20,37 @@ database:
     idle-timeout: 600000
     max-lifetime: 1800000
 
+# Security Settings
+# IMPORTANT: Change this key to a secure random string!
+encryption-key: 'change-this-to-a-secure-random-string-min-32-chars'
+
 # Discord webhook configuration
 discord:
   enabled: true
   webhooks:
     # Main webhook for bug reports
+    # Set enabled to false if you don't want to use this webhook
+    # Example URL: https://discord.com/api/webhooks/123456789/abcdefghijklmnop
     reports:
-      enabled: true
-      url: 'YOUR_REPORTS_WEBHOOK_URL_HERE'
+      enabled: false  # Change to true and add URL below when ready
+      url: ''
     # Webhook for admin status changes
     admin-changes:
-      enabled: true
-      url: 'YOUR_ADMIN_CHANGES_WEBHOOK_URL_HERE'
+      enabled: false  # Change to true and add URL below when ready
+      url: ''
     # Webhook for comments/notes added by admins
     admin-notes:
-      enabled: true
-      url: 'YOUR_ADMIN_NOTES_WEBHOOK_URL_HERE'
+      enabled: false  # Change to true and add URL below when ready
+      url: ''
     # Webhook for bug status changes
     status-changes:
-      enabled: true
-      url: 'YOUR_STATUS_CHANGES_WEBHOOK_URL_HERE'
+      enabled: false  # Change to true and add URL below when ready
+      url: ''
 
 # Update notification settings
+# The plugin automatically detects its version from plugin.yml
+# It checks GitHub releases at: https://github.com/msncakma/msnReports/releases/latest
+# No manual version configuration is needed
 update-notifications:
   enabled: true
   check-on-startup: true
@@ -53,10 +62,3 @@ admin-notifications:
   enabled: true
   on-login: true
   permission: 'msnreports.notify'
-
-# Security Settings
-# IMPORTANT: Change this key to a secure random string!
-encryption-key: 'change-this-to-a-secure-random-string-min-32-chars'
-
-# Plugin Version (DO NOT MODIFY - Updated automatically)
-version: '1.2-BETA'
